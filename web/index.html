@@ -663,7 +663,8 @@
         var payload = {
           event: eventName,
           page: pageName,
-          ts: new Date().toISOString()
+          // U-App 把 ts 当作保留字；使用 h5_ts 保留页面侧时间戳。
+          h5_ts: new Date().toISOString()
         };
 
         if (params) {
