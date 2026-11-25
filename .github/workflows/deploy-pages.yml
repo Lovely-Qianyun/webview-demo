@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -26,16 +27,36 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: web
 
+      # GitHub occasionally needs a moment before a freshly uploaded artifact
+      # is visible to the Pages deployment API.
+      - name: Wait for Pages artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 24); do
+            count=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+              --jq '[.artifacts[] | select(.name == "github-pages")] | length')
+            if [ "$count" -ge 1 ]; then
+              echo "Pages artifact is available for deployment."
+              exit 0
+            fi
+            echo "Pages artifact not visible yet (attempt ${attempt}/24); retrying in 5 seconds..."
+            sleep 5
+          done
+          echo "Pages artifact was not visible after 120 seconds." >&2
+          exit 1
+
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
