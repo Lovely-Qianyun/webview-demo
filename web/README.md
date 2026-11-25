@@ -19,13 +19,38 @@ python -m http.server 8000 -d web
 
 然后访问 <http://localhost:8000/>，按 `Ctrl+C` 停止。也可以直接双击 `web\index.html` 用浏览器打开（`file://` 下功能正常）。
 
-## 埋点占位
+## H5 埋点与 Android 原生桥
 
-`web/index.html` 内定义了全局的 `track(eventName, params)` 占位函数，目前只通过 `console.debug` 输出。后续接入真实统计 SDK 时，只需替换该函数的函数体，不需要改动调用点：
+`web/index.html` 内定义了全局的 `track(eventName, params)`：
 
-- 页面加载触发 `page_view`
-- 点击 CTA 触发 `cta_click`
-- 关键区域带有 `data-area`、按钮带有 `data-track` 属性，便于后续实验
+- 页面运行在 WebView 且发现 Android 注入的 `window.UmengBridge` 时，事件通过原生桥进入友盟 U-App。
+- 在普通浏览器中，Android 桥不存在，函数自动回退到 `console.debug`，页面可独立预览。
+- 页面加载触发 `page_view`，点击 CTA 触发 `cta_click`。
+- 页面上的通道状态会显示当前使用「Android 原生桥」还是「浏览器控制台」。
+
+桥梁调用契约：
+
+```js
+window.UmengBridge.track(
+  'cta_click',
+  JSON.stringify({
+    page: 'welcome',
+    area: 'hero-cta',
+    label: '开始体验'
+  })
+);
+// 返回 JSON 字符串，例如：
+// {"ok":true,"transport":"android-bridge","event":"cta_click"}
+```
+
+Android 端只暴露这一个桥对象，并校验：
+
+- 当前页面必须是配置的 HTTPS 主机；
+- 事件名和参数键只允许字母、数字、`_`、`.`、`-`；
+- 最多 20 个参数，单个值最多 256 字符；
+- 桥内通过 `MobclickAgent.onEvent(...)` 发送到友盟 U-App。
+
+浏览器里打开时不会有桥，只会看到控制台日志，这是预期行为。Android 源码中的实现位于 `android/app/src/main/java/com/lovelyqianyun/webviewdemo/UmengWebBridge.java`。
 
 ## 首次发布到 GitHub Pages
 

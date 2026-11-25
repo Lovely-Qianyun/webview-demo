@@ -231,6 +231,50 @@
       background: #ea580c;
     }
 
+    .bridge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin: 14px 0 0;
+      padding: 6px 10px;
+      border: 1px solid #f0d5b9;
+      border-radius: 999px;
+      background: #fff7ec;
+      color: #7c4a2d;
+      font-size: 11.5px;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    .bridge-dot {
+      flex: 0 0 auto;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #a8a29e;
+    }
+
+    .bridge-status[data-state="ready"] {
+      border-color: #b7efd0;
+      background: #f0fdf5;
+      color: #166534;
+    }
+
+    .bridge-status[data-state="ready"] .bridge-dot {
+      background: #10b981;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, .12);
+    }
+
+    .bridge-status[data-state="console"] {
+      border-color: #f3ddc5;
+      background: #fff5ea;
+      color: #7c4a2d;
+    }
+
+    .bridge-status[data-state="console"] .bridge-dot {
+      background: #f59e0b;
+    }
+
     .cta {
       position: relative;
       display: flex;
@@ -540,8 +584,13 @@
       <ul class="features" aria-label="页面特点">
         <li>轻量加载</li>
         <li>移动优先</li>
-        <li>埋点就绪</li>
+        <li>原生桥接</li>
       </ul>
+
+      <p class="bridge-status" id="bridge-status" data-state="checking" aria-live="polite">
+        <span class="bridge-dot" aria-hidden="true"></span>
+        <span id="bridge-status-text">正在检测 Android 原生桥…</span>
+      </p>
 
       <button class="cta" id="cta" type="button" data-track="cta_click" data-area="hero-cta" aria-describedby="cta-hint">
         <span class="cta-label">开始体验</span>
@@ -550,7 +599,7 @@
         </svg>
       </button>
 
-      <p class="hint" id="cta-hint">轻点一下，不会跳转，只会触发一次演示埋点。</p>
+      <p class="hint" id="cta-hint">轻点一下，不会跳转；在 WebView 中会通过 Android 原生桥上报。</p>
 
       <div class="feedback" id="feedback" role="status" aria-live="polite" aria-atomic="true" hidden data-area="cta-feedback">
         <span class="feedback-icon" aria-hidden="true">
@@ -560,7 +609,7 @@
         </span>
         <div class="feedback-copy">
           <p class="feedback-title">体验已开启</p>
-          <p class="feedback-text">埋点 <code>cta_click</code> 已触发 · 第 <span id="click-count">1</span> 次点击</p>
+          <p class="feedback-text">埋点 <code>cta_click</code> 已触发 · 通道 <span id="track-transport">浏览器控制台</span> · 第 <span id="click-count">1</span> 次点击</p>
         </div>
       </div>
     </article>
@@ -581,9 +630,34 @@
         prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       }
 
+      var bridgeStatusEl = document.getElementById('bridge-status');
+      var bridgeStatusTextEl = document.getElementById('bridge-status-text');
+      var transportEl = document.getElementById('track-transport');
+
+      function setBridgeState(state, text) {
+        if (bridgeStatusEl) {
+          bridgeStatusEl.setAttribute('data-state', state);
+        }
+        if (bridgeStatusTextEl) {
+          bridgeStatusTextEl.textContent = text;
+        }
+      }
+
+      function setTransportLabel(transport) {
+        if (!transportEl) {
+          return;
+        }
+        transportEl.textContent = transport === 'android-bridge'
+          ? 'Android 原生桥'
+          : '浏览器控制台';
+      }
+
       /**
-       * 埋点占位函数：接入真实统计 SDK 时，只需替换这里的函数体。
-       * page_view / cta_click 的调用方式与参数可以保持不变。
+       * H5 埋点入口。
+       *
+       * WebView 中存在 Android 注入的 window.UmengBridge 时，事件通过
+       * UmengBridge.track(eventName, JSON.stringify(params)) 进入友盟 U-App；
+       * 普通浏览器中自动回退到 console.debug，方便本地调试。
        */
       function track(eventName, params) {
         var payload = {
@@ -600,10 +674,42 @@
           }
         }
 
-        // TODO: 在此接入真实 SDK，例如 window.yourSdk.track(eventName, payload)
-        if (window.console && typeof console.debug === 'function') {
-          console.debug('[track]', payload);
+        var transport = 'console';
+        var bridgeError = '';
+
+        if (window.UmengBridge && typeof window.UmengBridge.track === 'function') {
+          try {
+            var rawResponse = window.UmengBridge.track(eventName, JSON.stringify(payload));
+            var bridgeResponse = rawResponse ? JSON.parse(rawResponse) : null;
+            if (bridgeResponse && bridgeResponse.ok === true) {
+              transport = 'android-bridge';
+            } else {
+              bridgeError = bridgeResponse && bridgeResponse.error
+                ? String(bridgeResponse.error)
+                : 'bridge_rejected';
+            }
+          } catch (error) {
+            bridgeError = 'bridge_exception';
+          }
         }
+
+        setTransportLabel(transport);
+        if (transport === 'android-bridge') {
+          setBridgeState('ready', '已连接 Android 原生桥，事件会进入友盟 U-App');
+        } else {
+          setBridgeState('console', bridgeError
+            ? '原生桥调用失败，已回退浏览器控制台'
+            : '浏览器环境：只写入控制台，不进入友盟');
+        }
+
+        if (window.console && typeof console.debug === 'function') {
+          console.debug('[track][' + transport + ']', payload);
+          if (bridgeError) {
+            console.debug('[track][bridge-error]', bridgeError);
+          }
+        }
+
+        return transport;
       }
 
       // 暴露到全局，方便后续实验与调试
